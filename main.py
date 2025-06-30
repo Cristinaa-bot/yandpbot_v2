@@ -12,7 +12,7 @@ dp = Dispatcher(storage=MemoryStorage())
 
 @dp.message(commands=["start"])
 async def cmd_start(message: Message):
-    await update.message.reply_text("Invia le foto (max 5), poi manda descrizione in 7 linee:")
+   await update.message.reply_text("Invia le foto (max 5), poi manda descrizione in 7 linee:")
 @dp.message(commands=["newprofile"])
 async def cmd_newprofile(message: Message):
     await message.answer("📝 Invia i dettagli del profilo. (Примерная логика создания анкеты)")
