@@ -11,7 +11,7 @@ import os
 
 # ======= CONFIG =======
 TOKEN = os.getenv("BOT_TOKEN")
-ADMINS = [6042298409, 5259200553]
+ADMINS = [7457586608, 7273958700, 6774952360]  # Новые админы
 CITIES = ["Milano", "Roma", "Firenze"]
 # =======================
 
@@ -55,8 +55,7 @@ async def cmd_start(message: types.Message):
 @router.callback_query(F.data.startswith("city:"))
 async def handle_city_selection(callback: types.CallbackQuery):
     city = callback.data.split(":")[1]
-    # Тестовый ответ — позже заменим на реальные анкеты
-    await callback.message.answer(f"🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
+    await callback.message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
 
 @router.message(F.text == "/newprofile")
 async def new_profile(message: types.Message, state: FSMContext):
