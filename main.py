@@ -13,20 +13,14 @@ import os
 TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [7457586608, 7273958700, 6774952360]  # Новые админы
 CITIES = ["Milano", "Roma", "Firenze"]
-# =======================
-
 bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 
 # ======= STATES =======
 class Profile(StatesGroup):
-    city = State()
-    name = State()
-    age = State()
-    description = State()
-    photo = State()
-    whatsapp = State()
+    waiting_text = State()
+    waiting_photos = State()
 
 # ======= KEYBOARDS =======
 def cities_kb():
@@ -54,7 +48,6 @@ async def cmd_start(message: types.Message):
 
 @router.callback_query(F.data.startswith("city:"))
 async def handle_city_selection(callback: types.CallbackQuery):
-    city = callback.data.split(":")[1]
     await callback.message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
 
 @router.message(F.text == "/newprofile")
@@ -62,62 +55,55 @@ async def new_profile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
         await message.answer("Solo gli amministratori possono aggiungere profili.")
         return
-    await state.set_state(Profile.city)
-    await message.answer("📍 Inserisci la città:")
+    await state.set_state(Profile.waiting_text)
+    await message.answer("📚 Invia i dettagli del profilo.\n(Примерная метка создания анкеты)")
 
-@router.message(Profile.city)
-async def profile_city(message: types.Message, state: FSMContext):
-    await state.update_data(city=message.text)
-    await state.set_state(Profile.name)
-    await message.answer("👤 Inserisci il nome:")
+@router.message(Profile.waiting_text)
+async def receive_profile_text(message: types.Message, state: FSMContext):
+    lines = message.text.strip().split("\n")
+    if len(lines) < 8:
+        await message.answer("❌ Devi inviare 8 righe di testo (nome, età, città, ...)")
+        return
 
-@router.message(Profile.name)
-async def profile_name(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text)
-    await state.set_state(Profile.age)
-    await message.answer("🎂 Inserisci l'età:")
+    data = {
+        "name": lines[0],
+        "age": lines[1],
+        "city": lines[2],
+        "description": "\n".join(lines[3:7]),
+        "whatsapp": lines[7]
+    }
 
-@router.message(Profile.age)
-async def profile_age(message: types.Message, state: FSMContext):
-    await state.update_data(age=message.text)
-    await state.set_state(Profile.description)
-    await message.answer("📝 Inserisci la descrizione:")
+    await state.update_data(profile=data, photos=[])
+    await state.set_state(Profile.waiting_photos)
+    await message.answer("📸 Invia 5 foto del profilo, una per una:")
 
-@router.message(Profile.description)
-async def profile_description(message: types.Message, state: FSMContext):
-    await state.update_data(description=message.text)
-    await state.set_state(Profile.photo)
-    await message.answer("📸 Invia la foto:")
+@router.message(Profile.waiting_photos, F.photo)
+async def receive_photos(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    photos.append(message.photo[-1].file_id)
 
-@router.message(Profile.photo, F.photo)
-async def profile_photo(message: types.Message, state: FSMContext):
-    await state.update_data(photo=message.photo[-1].file_id)
-    await state.set_state(Profile.whatsapp)
-    await message.answer("📞 Inserisci il link WhatsApp (senza anteprima):")
-
-@router.message(Profile.whatsapp)
-async def profile_whatsapp(message: types.Message, state: FSMContext):
-    data = await state.update_data(whatsapp=message.text)
-    profile = await state.get_data()
-
-    text = (
-        f"<b>{profile['name']}, {profile['age']}</b>\n"
-        f"{profile['description']}\n\n"
-        f"<b>Città:</b> {profile['city']}\n"
-        f"<b>WhatsApp:</b> <a href='{profile['whatsapp']}'>Contatto</a>"
-    )
-
-    await bot.send_photo(
-        chat_id=message.chat.id,
-        photo=profile['photo'],
-        caption=text,
-        reply_markup=vote_kb(profile_id="123"),  # позже подставим ID
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True
-    )
-
-    await state.clear()
-    await message.answer("✅ Profilo pubblicato con successo!")
+    if len(photos) < 5:
+        await state.update_data(photos=photos)
+        await message.answer(f"📷 Foto ricevuta ({len(photos)}/5). Invia un'altra:")
+    else:
+        profile = data["profile"]
+        profile_text = (
+            f"<b>{profile['name']}, {profile['age']}</b>\n"
+            f"{profile['description']}\n\n"
+            f"<b>Città:</b> {profile['city']}\n"
+            f"<b>WhatsApp:</b> <a href='{profile['whatsapp']}'>Contatto</a>"
+        )
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo=photos[0],
+            caption=profile_text,
+            reply_markup=vote_kb(profile_id="123"),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+        await state.clear()
+        await message.answer("✅ Profilo pubblicato con successo!")
 
 # ======= LAUNCH =======
 async def main():
