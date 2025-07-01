@@ -116,8 +116,7 @@ if __name__ == "__main__":
 @router.message(F.text == "/done")
 async def profile_done(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    photos = data.get("photo", [])
-
+   photos = data.get("photos", [])
     if len(photos) < 5:
         await message.answer("❗ Devi inviare 5 foto prima di completare il profilo.")
         return
