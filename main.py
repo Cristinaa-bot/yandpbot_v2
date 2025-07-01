@@ -87,6 +87,27 @@ async def handle_photos(message: types.Message, state: FSMContext):
     data = await state.get_data()
     photos = data.get("photos", [])
     photos.append(message.photo[-1].file_id)
+# Для хранения временных фото
+photo_storage = {}
+
+@router.message(Profile.photo)
+async def handle_photo_group(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    media_group_id = message.media_group_id
+
+    # Если это часть альбома (альбом = все 5 фото вместе)
+    if media_group_id:
+        if user_id not in photo_storage:
+            photo_storage[user_id] = []
+        photo_storage[user_id].append(message.photo[-1].file_id)
+
+        if len(photo_storage[user_id]) == 5:
+            await state.update_data(photo_ids=photo_storage[user_id])
+            photo_storage.pop(user_id, None)
+            await state.set_state(Profile.whatsapp)
+            await message.answer("📞 Inserisci il link WhatsApp (senza anteprima):")
+    else:
+        await message.answer("📸 Invia 5 foto insieme (come album, non separatamente).")
 
     await state.update_data(photos=photos)
 
