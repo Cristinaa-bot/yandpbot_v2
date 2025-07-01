@@ -113,3 +113,30 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
+@router.message(F.text == "/done")
+async def profile_done(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    photos = data.get("photo", [])
+
+    if len(photos) < 5:
+        await message.answer("❗ Devi inviare 5 foto prima di completare il profilo.")
+        return
+
+    text = (
+        f"<b>{data['name']}, {data['age']}</b>\n"
+        f"{data['description']}\n\n"
+        f"📍Città: {data['city']}\n"
+        f"📞 WhatsApp: <a href='{data['whatsapp']}'>Contatto</a>"
+    )
+
+    await bot.send_photo(
+        chat_id=message.chat.id,
+        photo=photos[0],
+        caption=text,
+        reply_markup=vote_kb(profile_id="123"),  # временный ID
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+    await state.clear()
+    await message.answer("✅ Profilo pubblicato con successo!")
