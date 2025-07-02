@@ -108,13 +108,22 @@ async def handle_photo_group(message: types.Message, state: FSMContext):
             await message.answer("📞 Inserisci il link WhatsApp (senza anteprima):")
     else:
         await message.answer("📸 Invia 5 foto insieme (come album, non separatamente).")
+@router.message(Profile.photos, F.photo)
+async def handle_photo_album(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    album_id = message.media_group_id
+    photos = data.get("photos", [])
 
-    await state.update_data(photos=photos)
+    if album_id:
+        photos.append(message.photo[-1].file_id)
+        await state.update_data(photos=photos)
 
-    if len(photos) < 5:
-        await message.answer(f"📷 Foto {len(photos)}/5 ricevuta. Continua...")
+        if len(photos) >= 5:
+            await message.answer("✅ Tutte le 5 foto ricevute. Ora invia /done per pubblicare il profilo.")
     else:
-        await message.answer("✅ Tutte le foto ricevute. Invia /done per pubblicare il profilo.")
+        photos.append(message.photo[-1].file_id)
+        await state.update_data(photos=photos)
+        await message.answer(f"📸 Foto ricevuta ({len(photos)}/5). Invia altre o /done.")
 
 @router.message(Profile.photos, F.text == "/done")
 async def done_profile(message: types.Message, state: FSMContext):
