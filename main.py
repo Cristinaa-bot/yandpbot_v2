@@ -1,4 +1,4 @@
-iimport logging
+import logging
 fimport logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
