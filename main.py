@@ -90,7 +90,7 @@ async def handle_photos(message: types.Message, state: FSMContext):
 # Для хранения временных фото
 photo_storage = {}
 
-@router.message(Profile.photo)
+@router.message(Profile.photos)
 async def handle_photo_group(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     media_group_id = message.media_group_id
