@@ -1,123 +1,121 @@
 import logging
-fimport logging
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.filters import CommandStart, Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram import Router
 import asyncio
 
-API_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-
-# Админы
+API_TOKEN = "8146798235:AAG-JTJOjHaljEDGBs_hlMjMpVbyw6Ih1Qo"
 ADMINS = [7457586608, 7273958700, 6774952360]
 
-logging.basicConfig(level=logging.INFO)
+CITIES = ["Milano", "Roma", "Firenze"]
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
+router = Router()
 
 class Profile(StatesGroup):
     text = State()
     photos = State()
-    whatsapp = State()
 
-photo_storage = {}
+def cities_kb():
+    buttons = [InlineKeyboardButton(text=city, callback_data=f"city:{city}") for city in CITIES]
+    return InlineKeyboardMarkup(inline_keyboard=[[btn] for btn in buttons])
 
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Milano"), KeyboardButton(text="Roma"), KeyboardButton(text="Firenze")]
-        ],
-        resize_keyboard=True
+def vote_kb(profile_id):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🌟 Pulizia", callback_data=f"vote:{profile_id}:pulizia"),
+                InlineKeyboardButton(text="💅 Bellezza", callback_data=f"vote:{profile_id}:bellezza"),
+            ],
+            [
+                InlineKeyboardButton(text="🍷 Servizio", callback_data=f"vote:{profile_id}:servizio"),
+                InlineKeyboardButton(text="📍 Indirizzo", callback_data=f"vote:{profile_id}:indirizzo"),
+            ]
+        ]
     )
-    await message.answer("👋 Benvenuto! Seleziona la città per vedere i profili disponibili:", reply_markup=keyboard)
 
-@dp.message(Command("newprofile"))
+@router.message(F.text == "/start")
+async def cmd_start(message: types.Message):
+    await message.answer("Benvenuto! Seleziona la città per vedere i profili disponibili:", reply_markup=cities_kb())
+
+@router.callback_query(F.data.startswith("city:"))
+async def handle_city_selection(callback: types.CallbackQuery):
+    await callback.message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
+
+@router.message(F.text == "/newprofile")
 async def new_profile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
-        await message.answer("⛔️ Solo gli amministratori possono creare profili.")
         return
-    await message.answer("✍️ Invia 8 righe con le seguenti informazioni separate da 'Invio':\n1. Nome\n2. Età\n3. Città\n4. Nazionalità\n5. Date\n6. Disponibilità\n7. Preferenze\n8. WhatsApp")
     await state.set_state(Profile.text)
+    await message.answer("📋 Invia le 8 righe di testo per il profilo:")
 
-@dp.message(Profile.text)
-async def process_text(message: types.Message, state: FSMContext):
+@router.message(Profile.text)
+async def handle_text(message: types.Message, state: FSMContext):
     lines = message.text.strip().split("\n")
     if len(lines) != 8:
-        await message.answer("⚠️ Invia esattamente 8 righe di testo.")
+        await message.answer("❌ Devi inviare esattamente 8 righe di testo.")
         return
-    data = {
-        "name": lines[0],
-        "age": lines[1],
-        "city": lines[2],
-        "nationality": lines[3],
-        "dates": lines[4],
-        "availability": lines[5],
-        "preferences": lines[6],
-        "whatsapp": lines[7],
-        "photos": []
-    }
-    await state.update_data(**data)
+    await state.update_data(
+        name=lines[0],
+        age=lines[1],
+        city=lines[2],
+        nationality=lines[3],
+        dates=lines[4],
+        availability=lines[5],
+        preferences=lines[6],
+        whatsapp=lines[7],
+        photos=[]
+    )
     await state.set_state(Profile.photos)
-    await message.answer("📸 Invia 5 foto insieme (come album).")
+    await message.answer("📸 Invia 5 foto (tutte insieme, come album).")
 
-@dp.message(Profile.photos, F.media_group_id)
-async def handle_album(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id not in photo_storage:
-        photo_storage[user_id] = []
-    photo_storage[user_id].append(message.photo[-1].file_id)
+@router.message(Profile.photos, F.media_group_id)
+async def handle_album(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    photos.append(message.photo[-1].file_id)
+    await state.update_data(photos=photos)
 
-@dp.message(Profile.photos)
-async def finish_album(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id not in photo_storage or len(photo_storage[user_id]) < 5:
-        await message.answer(f"📸 Foto {len(photo_storage.get(user_id, []))}/5 ricevuta. Continua...")
+@router.message(Profile.photos, F.text == "/done")
+async def handle_done(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMINS:
+        return
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    if len(photos) < 5:
+        await message.answer("❌ Devi inviare almeno 5 foto.")
         return
 
-    data = await state.get_data()
-    data["photos"] = photo_storage[user_id][:5]
-    await state.update_data(**data)
-    photo_storage.pop(user_id, None)
-
-    await message.answer("✅ Tutte le foto ricevute. Invia /done per pubblicare il profilo.")
-    await state.set_state(Profile.whatsapp)
-
-@dp.message(Profile.whatsapp, Command("done"))
-async def done_profile(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    if len(data.get("photos", [])) < 5:
-        await message.answer("⚠️ Servono 5 foto prima di completare il profilo.")
-        return
-
-    caption = (
+    text = (
         f"<b>{data['name']}, {data['age']}</b>\n"
-        f"🌍 {data['nationality']}\n"
+        f"<b>{data['nationality']}</b>\n"
+        f"{data['preferences']}\n\n"
+        f"<b>📍 {data['city']}</b>\n"
         f"📅 {data['dates']}\n"
-        f"⏰ {data['availability']}\n"
-        f"💖 {data['preferences']}\n"
-        f"📍 {data['city']}\n"
-        f"📞 <a href='https://wa.me/{data['whatsapp'].replace('+', '').replace(' ', '')}'>Contatto</a>"
+        f"🕓 {data['availability']}\n"
+        f"<b>WhatsApp:</b> <a href='https://wa.me/{data['whatsapp'].replace('+', '').replace(' ', '')}'>Contatto</a>"
     )
 
-    for photo_id in data['photos']:
-        await bot.send_photo(
-            chat_id=message.chat.id,
-            photo=photo_id,
-            caption=caption if photo_id == data['photos'][0] else None
-        )
+    for photo_id in photos:
+        await bot.send_photo(message.chat.id, photo=photo_id)
 
+    await bot.send_message(message.chat.id, text, reply_markup=vote_kb("123"), disable_web_page_preview=True)
     await message.answer("✅ Profilo pubblicato con successo!")
     await state.clear()
 
+@router.message(F.text == "/done")
+async def done_wrong_state(message: types.Message):
+    await message.answer("❌ Nessun profilo in corso. Usa /newprofile per iniziare.")
+
 async def main():
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
