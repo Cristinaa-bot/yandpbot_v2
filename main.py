@@ -82,15 +82,21 @@ async def get_text(message: Message, state: FSMContext):
     await state.set_state(ProfileForm.photos)
     await message.answer("📸 Invia ora 5 foto come un solo album.")
 
+@router.message(F.media_group_id)
+async def handle_album(message: Message, state: FSMContext):
+    user_id = message.from_user.id
 
-@router.message(ProfileForm.photos, F.media_group_id)
-async def get_album_photos(message: Message, state: FSMContext):
-    data = await state.get_data()
-    if "photo_ids" not in data:
-        data["photo_ids"] = []
-    data["photo_ids"].append(message.photo[-1].file_id)
-    await state.update_data(photo_ids=data["photo_ids"])
+    # Проверка: пользователь должен быть в процессе создания анкеты
+    profile = profiles.get(user_id)
+    if not profile:
+        return
 
+    # Сохраняем фото в альбом
+    album_buffer.setdefault(user_id, []).append(message.photo[-1].file_id)
+
+    # Если получено 5 фото — сообщаем
+    if len(album_buffer[user_id]) == 5:
+        await message.answer("✅ Tutte le foto ricevute. Invia /done per pubblicare il profilo.")
 
 @router.message(ProfileForm.photos, F.text == "/done")
 async def finalize_profile(message: Message, state: FSMContext):
