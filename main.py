@@ -98,38 +98,53 @@ async def handle_album(message: Message, state: FSMContext):
     if len(album_buffer[user_id]) == 5:
         await message.answer("✅ Tutte le foto ricevute. Invia /done per pubblicare il profilo.")
 
-@router.message(ProfileForm.photos, F.text == "/done")
-async def finalize_profile(message: Message, state: FSMContext):
-    data = await state.get_data()
-    if "text" not in data or "photo_ids" not in data or len(data["photo_ids"]) < 5:
-        await message.answer("❗️Assicurati di aver inviato 5 foto prima di usare /done.")
-        return
+# === Новый блок обработки фото и команды /done ===
+from aiogram.types import FSInputFile
 
-    text_lines = data["text"]
-    name, age, city, nationality, dates, availability, preferences, whatsapp = text_lines
+PHOTO_LIMIT = 5
+photo_buffer = {}
 
-    caption = (
-        f"<b>{name}, {age}</b>\n"
-        f"{nationality}\n"
-        f"{dates}\n"
-        f"{availability}\n"
-        f"{preferences}\n\n"
-        f"<b>Città:</b> {city}\n"
-        f"<b>WhatsApp:</b> <a href='https://wa.me/{whatsapp.replace('+', '').replace(' ', '')}'>Contatto</a>"
+@router.message(Profile.photo, F.photo)
+async def handle_photos(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    photo_buffer.setdefault(user_id, [])
+    photo_buffer[user_id].append(message.photo[-1].file_id)
+
+    if len(photo_buffer[user_id]) < PHOTO_LIMIT:
+        await message.answer(f"📸 {len(photo_buffer[user_id])}/5 foto ricevute. Invia le rimanenti.")
+    elif len(photo_buffer[user_id]) == PHOTO_LIMIT:
+        await state.set_state(Profile.whatsapp)
+        await message.answer("📞 Inserisci il link WhatsApp (senza anteprima):")
+
+@router.message(Profile.whatsapp)
+async def handle_whatsapp(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = await state.update_data(whatsapp=message.text)
+    profile = await state.get_data()
+    photos = photo_buffer.get(user_id, [])
+
+    text = (
+        f"<b>{profile['name']}, {profile['age']}</b>\n"
+        f"{profile['description']}\n\n"
+        f"<b>Città:</b> {profile['city']}\n"
+        f"<b>WhatsApp:</b> <a href='{profile['whatsapp']}'>Contatto</a>"
     )
 
-    media = []
-    for i, file_id in enumerate(data["photo_ids"][:5]):
-        if i == 0:
-            media.append(types.InputMediaPhoto(media=file_id, caption=caption, parse_mode="HTML"))
-        else:
-            media.append(types.InputMediaPhoto(media=file_id))
+    # Отправить фото как альбом
+    media_group = [types.InputMediaPhoto(media=photo_id) for photo_id in photos[:-1]]
+    await bot.send_media_group(chat_id=message.chat.id, media=media_group)
+    await bot.send_photo(
+        chat_id=message.chat.id,
+        photo=photos[-1],
+        caption=text,
+        reply_markup=vote_kb(profile_id="123"),  # здесь может быть ID профиля
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
-    await bot.send_media_group(chat_id=message.chat.id, media=media)
-    await message.answer("✅ Profilo pubblicato con successo!")
-
+    photo_buffer.pop(user_id, None)
     await state.clear()
-
+    await message.answer("✅ Profilo pubblicato con successo!")
 
 @router.message(F.text.startswith("/"))
 async def unknown_command(message: Message):
