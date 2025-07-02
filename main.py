@@ -1,70 +1,58 @@
 iimport logging
+fimport logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram import Router
+from aiogram.types import Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.filters import CommandStart, Command
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import asyncio
-import os
 
-TOKEN = os.getenv("BOT_TOKEN")
+API_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 
+# Админы
 ADMINS = [7457586608, 7273958700, 6774952360]
 
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
-router = Router()
 
-CITIES = ["Milano", "Roma", "Firenze"]
+class Profile(StatesGroup):
+    text = State()
+    photos = State()
+    whatsapp = State()
 
-class ProfileState(StatesGroup):
-    waiting_for_text = State()
-    waiting_for_photos = State()
+photo_storage = {}
 
-def cities_kb():
-    buttons = [InlineKeyboardButton(text=city, callback_data=f"city:{city}") for city in CITIES]
-    return InlineKeyboardMarkup(inline_keyboard=[[btn] for btn in buttons])
-
-def vote_kb(profile_id):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🌟 Pulizia", callback_data=f"vote:{profile_id}:pulizia"),
-                InlineKeyboardButton(text="💅 Bellezza", callback_data=f"vote:{profile_id}:bellezza"),
-            ],
-            [
-                InlineKeyboardButton(text="🍷 Servizio", callback_data=f"vote:{profile_id}:servizio"),
-                InlineKeyboardButton(text="📍 Indirizzo", callback_data=f"vote:{profile_id}:indirizzo"),
-            ]
-        ]
-    )
-
-profiles_data = {}
-
-@router.message(F.text == "/start")
+@dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("Benvenuto! Seleziona la città per vedere i profili disponibili:", reply_markup=cities_kb())
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Milano"), KeyboardButton(text="Roma"), KeyboardButton(text="Firenze")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("👋 Benvenuto! Seleziona la città per vedere i profili disponibili:", reply_markup=keyboard)
 
-@router.callback_query(F.data.startswith("city:"))
-async def handle_city_selection(callback: types.CallbackQuery):
-    await callback.message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
-
-@router.message(F.text == "/newprofile")
-async def cmd_new_profile(message: types.Message, state: FSMContext):
+@dp.message(Command("newprofile"))
+async def new_profile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
+        await message.answer("⛔️ Solo gli amministratori possono creare profili.")
         return
-    await message.answer("Invia ora le 8 righe di testo:")
-    await state.set_state(ProfileState.waiting_for_text)
+    await message.answer("✍️ Invia 8 righe con le seguenti informazioni separate da 'Invio':\n1. Nome\n2. Età\n3. Città\n4. Nazionalità\n5. Date\n6. Disponibilità\n7. Preferenze\n8. WhatsApp")
+    await state.set_state(Profile.text)
 
-@router.message(ProfileState.waiting_for_text)
-async def receive_text(message: types.Message, state: FSMContext):
+@dp.message(Profile.text)
+async def process_text(message: types.Message, state: FSMContext):
     lines = message.text.strip().split("\n")
-    if len(lines) < 8:
-        await message.answer("❌ Invia esattamente 8 righe.")
+    if len(lines) != 8:
+        await message.answer("⚠️ Invia esattamente 8 righe di testo.")
         return
-    profile = {
+    data = {
         "name": lines[0],
         "age": lines[1],
         "city": lines[2],
@@ -75,53 +63,61 @@ async def receive_text(message: types.Message, state: FSMContext):
         "whatsapp": lines[7],
         "photos": []
     }
-    await state.update_data(profile=profile)
-    await state.set_state(ProfileState.waiting_for_photos)
-    await message.answer("📸 Invia ora 5 foto (in un unico invio).")
+    await state.update_data(**data)
+    await state.set_state(Profile.photos)
+    await message.answer("📸 Invia 5 foto insieme (come album).")
 
-@router.message(ProfileState.waiting_for_photos, F.media_group_id)
-async def receive_album_photo(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    profile = data["profile"]
-    photos = profile.get("photos", [])
-    photos.append(message.photo[-1].file_id)
-    profile["photos"] = photos
-    await state.update_data(profile=profile)
+@dp.message(Profile.photos, F.media_group_id)
+async def handle_album(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id not in photo_storage:
+        photo_storage[user_id] = []
+    photo_storage[user_id].append(message.photo[-1].file_id)
 
-@router.message(ProfileState.waiting_for_photos, F.text == "/done")
-async def finish_profile(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    profile = data["profile"]
-    if len(profile.get("photos", [])) < 5:
-        await message.answer("❌ Devi inviare 5 foto prima di completare.")
+@dp.message(Profile.photos)
+async def finish_album(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id not in photo_storage or len(photo_storage[user_id]) < 5:
+        await message.answer(f"📸 Foto {len(photo_storage.get(user_id, []))}/5 ricevuta. Continua...")
         return
-    text = (
-        f"<b>{profile['name']}, {profile['age']}</b>\n"
-        f"<b>{profile['nationality']}</b>\n"
-        f"{profile['preferences']}\n\n"
-        f"<b>Date:</b> {profile['dates']}\n"
-        f"<b>Disponibilità:</b> {profile['availability']}\n"
-        f"<b>Città:</b> {profile['city']}\n"
-        f"<b>WhatsApp:</b> <a href='https://wa.me/{profile['whatsapp'].replace('+', '').replace(' ', '')}'>Contatto</a>"
-    )
-    media = []
-    for photo_id in profile["photos"]:
-        media.append(types.InputMediaPhoto(media=photo_id))
-    media[0].caption = text
-    media[0].parse_mode = ParseMode.HTML
 
-    await bot.send_media_group(chat_id=message.chat.id, media=media)
+    data = await state.get_data()
+    data["photos"] = photo_storage[user_id][:5]
+    await state.update_data(**data)
+    photo_storage.pop(user_id, None)
+
+    await message.answer("✅ Tutte le foto ricevute. Invia /done per pubblicare il profilo.")
+    await state.set_state(Profile.whatsapp)
+
+@dp.message(Profile.whatsapp, Command("done"))
+async def done_profile(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if len(data.get("photos", [])) < 5:
+        await message.answer("⚠️ Servono 5 foto prima di completare il profilo.")
+        return
+
+    caption = (
+        f"<b>{data['name']}, {data['age']}</b>\n"
+        f"🌍 {data['nationality']}\n"
+        f"📅 {data['dates']}\n"
+        f"⏰ {data['availability']}\n"
+        f"💖 {data['preferences']}\n"
+        f"📍 {data['city']}\n"
+        f"📞 <a href='https://wa.me/{data['whatsapp'].replace('+', '').replace(' ', '')}'>Contatto</a>"
+    )
+
+    for photo_id in data['photos']:
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo=photo_id,
+            caption=caption if photo_id == data['photos'][0] else None
+        )
+
     await message.answer("✅ Profilo pubblicato con successo!")
     await state.clear()
 
-@router.message(ProfileState.waiting_for_photos)
-async def fallback_photos(message: types.Message):
-    await message.answer("❗️Devi inviare 5 foto come gruppo o digitare /done per completare.")
-
 async def main():
-    dp.include_router(router)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
