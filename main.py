@@ -125,13 +125,12 @@ async def finalize_profile(message: Message, state: FSMContext):
     await state.clear()
 
 
-@router.message()
-async def unknown(message: Message):
+@router.message(F.text.startswith("/"))
+async def unknown_command(message: Message):
     if message.from_user.id in ADMINS:
         await message.answer("Usa /newprofile per aggiungere un nuovo profilo.")
     else:
         await message.answer("Seleziona una città per vedere i profili disponibili.", reply_markup=cities_kb())
-
 
 # ======= RUN =======
 async def main():
