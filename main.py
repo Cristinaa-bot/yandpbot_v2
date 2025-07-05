@@ -1,35 +1,34 @@
 import logging
-import os
-from aiogram import Bot, Dispatcher, F, Router, types
-from aiogram.enums import ParseMode
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
 import asyncio
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+import os
 
+# === НАСТРОЙКИ ===
 API_TOKEN = "8146798235:AAG-JTJOjHaljEDGBs_hlMjMpVbyw6Ih1Qo"
 ADMINS = [7457586608, 7273958700, 6774952360]
 CITIES = ["Milano", "Roma", "Firenze"]
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
-router = Router()
-dp.include_router(router)
 
-# === FSM ===
-class ProfileFSM(StatesGroup):
-    text = State()
+# === СОСТОЯНИЯ ===
+class Profile(StatesGroup):
+    text_block = State()
     photos = State()
 
 # === КНОПКИ ===
-def cities_kb():
+def city_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=city)] for city in CITIES],
         resize_keyboard=True
     )
 
-def vote_kb(profile_id="0"):
+def vote_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🌟 Pulizia"), KeyboardButton(text="💅 Bellezza")],
@@ -38,85 +37,82 @@ def vote_kb(profile_id="0"):
         resize_keyboard=True
     )
 
-# === START ===
-@router.message(F.text == "/start")
-async def cmd_start(message: types.Message):
-    await message.answer("📍 Seleziona la città:", reply_markup=cities_kb())
+# === ОБРАБОТЧИКИ ===
 
-@router.message(F.text.in_(CITIES))
-async def handle_city(message: types.Message):
-    await message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!")
+@dp.message(F.text == "/start")
+async def start(message: types.Message):
+    await message.answer("Benvenuto! Seleziona la città:", reply_markup=city_keyboard())
 
-# === NEW PROFILE ===
-@router.message(F.text == "/newprofile")
-async def cmd_newprofile(message: types.Message, state: FSMContext):
+@dp.message(F.text.in_(CITIES))
+async def show_city_profiles(message: types.Message):
+    await message.answer(
+        "🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+@dp.message(F.text == "/newprofile")
+async def new_profile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
+        await message.answer("Comando non disponibile.")
         return
-    await state.set_state(ProfileFSM.text)
-    await message.answer("✍️ Invia 8 righe di testo (nome, età, città, ecc.)")
+    await message.answer("📄 Invia le 8 righe di testo (nome, età, città, ecc.)")
+    await state.set_state(Profile.text_block)
 
-@router.message(ProfileFSM.text)
-async def get_text_block(message: types.Message, state: FSMContext):
+@dp.message(Profile.text_block)
+async def handle_text_block(message: types.Message, state: FSMContext):
     lines = message.text.strip().split("\n")
     if len(lines) != 8:
-        await message.answer("❌ Devi inviare esattamente 8 righe di testo.")
+        await message.answer("❌ Invia esattamente 8 righe di testo.")
         return
-    await state.update_data(text_lines=lines)
-    await state.set_state(ProfileFSM.photos)
-    await message.answer("📸 Invia ora 5 foto (tutte insieme, come album)")
+    await state.update_data(text_block=lines, photos=[])
+    await state.set_state(Profile.photos)
+    await message.answer("📸 Invia 5 foto (una per volta o come album).")
 
-@router.message(ProfileFSM.photos, F.media_group_id)
-async def receive_album(message: types.Message, state: FSMContext):
+@dp.message(Profile.photos, F.photo)
+async def handle_photos(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    album = data.get("album", [])
-    album.append(message.photo[-1].file_id)
-    await state.update_data(album=album)
+    photos = data.get("photos", [])
+    photos.append(message.photo[-1].file_id)
+    await state.update_data(photos=photos)
 
-@router.message(ProfileFSM.photos, F.text == "/done")
-async def publish_profile(message: types.Message, state: FSMContext):
+    if len(photos) < 5:
+        await message.answer(f"📸 Foto ricevute: {len(photos)}/5. Invia ancora.")
+    else:
+        await message.answer("✅ Foto ricevute. Ora invia /done per pubblicare.")
+
+@dp.message(F.text == "/done")
+async def finish_profile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
+        await message.answer("Comando non disponibile.")
         return
-
     data = await state.get_data()
-    text_lines = data.get("text_lines")
-    photos = data.get("album", [])
+    lines = data.get("text_block", [])
+    photos = data.get("photos", [])
 
-    if not text_lines or len(photos) != 5:
-        await message.answer("❌ Controlla di aver inviato 8 righe di testo e 5 foto.")
+    if len(lines) != 8 or len(photos) != 5:
+        await message.answer("❌ Dati incompleti. Invia 8 righe + 5 foto.")
         return
 
-    name, age, city, nationality, dates, availability, likes, whatsapp = text_lines
+    name, age, city, nationality, dates, availability, preferences, whatsapp = lines
 
     caption = (
         f"<b>{name}, {age}</b>\n"
-        f"<i>{nationality}</i>\n"
-        f"{likes}\n\n"
-        f"<b>📍 Città:</b> {city}\n"
-        f"<b>🗓 Date:</b> {dates}\n"
-        f"<b>⏰:</b> {availability}\n"
-        f"<b>📞 WhatsApp:</b> <a href='https://wa.me/{whatsapp.replace('+', '').replace(' ', '')}'>Contatto</a>"
+        f"{nationality}, {dates}\n"
+        f"{availability}\n"
+        f"{preferences}\n\n"
+        f"<b>Città:</b> {city}\n"
+        f"<b>WhatsApp:</b> <a href='https://wa.me/{whatsapp.replace('+', '').replace(' ', '')}'>Contatto</a>"
     )
 
-    # Отправим как альбом
-    media_group = []
-    for idx, file_id in enumerate(photos):
-        if idx == 0:
-            media_group.append(types.InputMediaPhoto(media=file_id, caption=caption, parse_mode="HTML"))
-        else:
-            media_group.append(types.InputMediaPhoto(media=file_id))
-    await bot.send_media_group(chat_id=message.chat.id, media=media_group)
+    media = [types.InputMediaPhoto(media=photo) for photo in photos]
+    media[0].caption = caption
+    media[0].parse_mode = "HTML"
 
-    # Голосование
-    await bot.send_message(
-        chat_id=message.chat.id,
-        text="🗳 Vota il profilo:",
-        reply_markup=vote_kb()
-    )
-
-    await message.answer("✅ Profilo pubblicato con successo!")
+    await bot.send_media_group(chat_id=message.chat.id, media=media)
+    await message.answer("✅ Profilo pubblicato con successo!", reply_markup=vote_keyboard())
     await state.clear()
 
-# === LAUNCH ===
+# === ЗАПУСК ===
 async def main():
     logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
