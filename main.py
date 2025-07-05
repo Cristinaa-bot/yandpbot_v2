@@ -1,119 +1,129 @@
 import logging
-import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import CommandStart, Command
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+import asyncio
+import os
 
+# ======= НАСТРОЙКИ =======
 API_TOKEN = "8146798235:AAG-JTJOjHaljEDGBs_hlMjMpVbyw6Ih1Qo"
 ADMINS = [7457586608, 7273958700, 6774952360]
-
-logging.basicConfig(level=logging.INFO)
+CITIES = ["Milano", "Roma", "Firenze"]
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
 
-class Profile(StatesGroup):
-    text = State()
-    photos = State()
+# ======= СОСТОЯНИЯ =======
+class ProfileForm(StatesGroup):
+    collecting_text = State()
+    collecting_photos = State()
 
-profiles = {}
-album_buffer = {}
+# ======= КНОПКИ ГОРОДОВ =======
+def city_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=city)] for city in CITIES],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
 
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
-    keyboard = ReplyKeyboardMarkup(
+# ======= КНОПКИ ГОЛОСОВАНИЯ =======
+def vote_keyboard(profile_id="123"):
+    return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Milano")],
-            [KeyboardButton(text="Roma")],
-            [KeyboardButton(text="Firenze")]
+            [KeyboardButton(text="🌟 Pulizia"), KeyboardButton(text="💅 Bellezza")],
+            [KeyboardButton(text="🍷 Servizio"), KeyboardButton(text="📍 Indirizzo")]
         ],
         resize_keyboard=True
     )
-    await message.answer("📍 Seleziona la città:", reply_markup=keyboard)
 
-@dp.message(F.text.in_(["Milano", "Roma", "Firenze"]))
-async def city_selected(message: Message):
-    await message.answer("🔍 Nessun profilo disponibile in questa città.\nNuovi arrivi in arrivo, resta sintonizzato!")
+# ======= ПЕРЕМЕННЫЕ =======
+profile_data = {}
+photos_buffer = {}
 
-@dp.message(Command("newprofile"))
-async def new_profile(message: Message, state: FSMContext):
+# ======= /START =======
+@dp.message(F.text == "/start")
+async def cmd_start(message: types.Message):
+    await message.answer("Benvenuto! Seleziona la città per vedere i profili disponibili:", reply_markup=city_keyboard())
+
+@dp.message(F.text.in_(CITIES))
+async def city_selected(message: types.Message):
+    await message.answer("🔍 Nessun profilo disponibile in questa città. Nuovi arrivi in arrivo, resta sintonizzato!", reply_markup=ReplyKeyboardRemove())
+
+# ======= /NEWPROFILE =======
+@dp.message(F.text == "/newprofile")
+async def cmd_newprofile(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS:
         return
-    await message.answer("📝 Invia le 8 righe di testo per il profilo:")
-    await state.set_state(Profile.text)
+    await state.set_state(ProfileForm.collecting_text)
+    await message.answer("✍️ Invia 8 righe di testo (nome, età, città, nazionalità, date, disponibilità, preferenze, WhatsApp):")
 
-@dp.message(Profile.text)
-async def process_text(message: Message, state: FSMContext):
+@dp.message(ProfileForm.collecting_text)
+async def handle_profile_text(message: types.Message, state: FSMContext):
     lines = message.text.strip().split("\n")
     if len(lines) != 8:
-        await message.answer("❌ Devi inviare esattamente 8 righe di testo.")
+        await message.answer("⚠️ Invia esattamente 8 righe di testo.")
         return
-    user_id = message.from_user.id
-    profiles[user_id] = {"data": lines, "photos": []}
-    album_buffer[user_id] = []
-    await message.answer("📸 Invia ora 5 foto come album.")
-    await state.set_state(Profile.photos)
+    profile_data[message.from_user.id] = {
+        "name": lines[0],
+        "age": lines[1],
+        "city": lines[2],
+        "nationality": lines[3],
+        "dates": lines[4],
+        "availability": lines[5],
+        "preferences": lines[6],
+        "whatsapp": lines[7],
+    }
+    photos_buffer[message.from_user.id] = []
+    await state.set_state(ProfileForm.collecting_photos)
+    await message.answer("📸 Invia 5 foto come album:")
 
-@dp.message(Profile.photos, F.media_group_id)
-async def handle_album(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    album_buffer[user_id].append(message.photo[-1].file_id)
-
-@dp.message(Profile.photos)
-async def save_photos(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id not in album_buffer or len(album_buffer[user_id]) != 5:
-        await message.answer("❌ Devi inviare esattamente 5 foto in un album.")
+@dp.message(ProfileForm.collecting_photos, F.content_type == "photo")
+async def handle_photos(message: types.Message):
+    if message.from_user.id not in photos_buffer:
         return
-    profiles[user_id]["photos"] = album_buffer[user_id]
-    await message.answer("✅ Foto ricevute. Invia /done per pubblicare il profilo.")
-
-@dp.message(Command("done"))
-async def publish_profile(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id not in ADMINS:
+    if not message.media_group_id:
+        await message.answer("⚠️ Invia tutte e 5 le foto insieme, come album.")
         return
-    profile = profiles.get(user_id)
-    if not profile:
-        await message.answer("❌ Nessun profilo trovato.")
+    photos_buffer[message.from_user.id].append(message.photo[-1].file_id)
+
+# ======= /DONE =======
+@dp.message(F.text == "/done")
+async def cmd_done(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMINS:
+        return
+    profile = profile_data.get(message.from_user.id)
+    photos = photos_buffer.get(message.from_user.id, [])
+
+    if not profile or len(photos) != 5:
+        await message.answer("⚠️ Profilo incompleto. Assicurati di inviare 5 foto.")
         return
 
-    text = "\n".join(profile["data"])
-    wa_number = profile["data"][-1].replace("+", "").replace(" ", "")
-    whatsapp_link = f"[{profile['data'][-1]}](https://wa.me/{wa_number})"
-
-    caption = f"{profile['data'][0]}, {profile['data'][1]}\n{profile['data'][2]}\n" \
-              f"{profile['data'][3]}\n{profile['data'][4]}\n{profile['data'][5]}\n" \
-              f"{profile['data'][6]}\n📞 {whatsapp_link}"
-
-    media = types.MediaGroup()
-    for photo_id in profile["photos"]:
-        media.attach_photo(photo_id)
-    await bot.send_media_group(chat_id=message.chat.id, media=media)
-
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🌟 Pulizia")],
-            [KeyboardButton(text="💅 Bellezza")],
-            [KeyboardButton(text="🍷 Servizio")],
-            [KeyboardButton(text="📍 Indirizzo")]
-        ],
-        resize_keyboard=True
+    text = (
+        f"<b>{profile['name']}, {profile['age']}</b>\n"
+        f"{profile['nationality']} — {profile['preferences']}\n"
+        f"<b>Date:</b> {profile['dates']}\n"
+        f"<b>Disponibilità:</b> {profile['availability']}\n"
+        f"<b>Città:</b> {profile['city']}\n"
+        f"<b>WhatsApp:</b> <a href='https://wa.me/{profile['whatsapp'].replace('+','').replace(' ', '')}'>Contatto</a>"
     )
 
-    await message.answer(caption, reply_markup=keyboard, disable_web_page_preview=True)
-    await message.answer("✅ Profilo pubblicato con successo!")
+    media = [types.InputMediaPhoto(media=photo) for photo in photos]
+    media[0].caption = text
+    media[0].parse_mode = "HTML"
 
+    await bot.send_media_group(chat_id=message.chat.id, media=media)
+    await message.answer("✅ Profilo pubblicato con successo!", reply_markup=vote_keyboard())
+    
     await state.clear()
-    profiles.pop(user_id, None)
-    album_buffer.pop(user_id, None)
+    profile_data.pop(message.from_user.id, None)
+    photos_buffer.pop(message.from_user.id, None)
 
+# ======= ЗАПУСК =======
 async def main():
+    logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
