@@ -119,3 +119,14 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    def city_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Milano")],
+            [KeyboardButton(text="Roma")],
+            [KeyboardButton(text="Firenze")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
