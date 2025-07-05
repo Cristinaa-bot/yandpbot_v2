@@ -119,6 +119,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
     def city_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
