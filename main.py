@@ -129,4 +129,5 @@ if __name__ == "__main__":
         resize_keyboard=True,
         one_time_keyboard=True
     )
+await message.answer("📍 Seleziona la città:", reply_markup=city_keyboard())
 
